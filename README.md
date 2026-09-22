@@ -308,3 +308,236 @@
 </body>
 </html>
 # World-Map-Fun
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>DÜNYA HARİTASI - Mobile Pixel Arena</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { background: #121212; color: #fff; overflow: hidden; height: 100vh; width: 100vw; display: flex; flex-direction: column; touch-action: none; }
+        
+        /* Üst Kontrol Barı */
+        header { background: #1f1f1f; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; z-index: 10; border-bottom: 1px solid #333; }
+        .logo { font-size: 14px; font-weight: bold; color: #ffca28; }
+        .stats { font-size: 11px; background: #2a2a2a; padding: 4px 8px; border-radius: 12px; border: 1px solid #444; display: flex; gap: 8px; align-items: center; }
+        .mode-tag { background: #333; padding: 2px 6px; border-radius: 6px; font-size: 10px; color: #4caf50; }
+
+        /* Oyun Tuvali */
+        #canvas-wrapper { flex: 1; position: relative; overflow: hidden; background: #000; }
+        canvas { display: block; image-rendering: pixelated; }
+
+        /* Arayüz Panelleri */
+        .ui-panel { position: absolute; z-index: 5; }
+        
+        /* Sol Araç Çubuğu */
+        #tool-bar { top: 10px; left: 10px; display: flex; flex-direction: column; gap: 6px; }
+        .btn { background: #2a2a2a; color: white; border: 1px solid #444; padding: 6px 10px; border-radius: 8px; font-size: 11px; font-weight: bold; cursor: pointer; }
+        .btn:active { background: #444; }
+
+        /* Sohbet Kutusu (Chat) */
+        #chat-container { bottom: 60px; left: 10px; width: 220px; max-height: 160px; background: rgba(20, 20, 20, 0.85); border: 1px solid #444; border-radius: 8px; display: flex; flex-direction: column; padding: 6px; gap: 4px; z-index: 6; }
+        #chat-messages { flex: 1; overflow-y: auto; font-size: 11px; display: flex; flex-direction: column; gap: 3px; max-height: 100px; color: #ddd; }
+        .chat-msg { word-break: break-word; }
+        .chat-msg b { color: #ffca28; }
+        #chat-input-container { display: flex; gap: 4px; }
+        #chat-input { flex: 1; background: #111; border: 1px solid #555; color: white; padding: 4px; border-radius: 4px; font-size: 11px; }
+        #chat-send { background: #27ae60; border: none; color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }
+
+        /* Renk Paleti */
+        #palette { bottom: 10px; left: 50%; transform: translateX(-50%); display: flex; gap: 5px; background: rgba(31, 31, 31, 0.9); padding: 6px; border-radius: 20px; border: 1px solid #444; }
+        .color-box { width: 26px; height: 26px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
+        .color-box.selected { border-color: #fff; transform: scale(1.15); }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="logo">WORLD MAP</div>
+        <div class="stats">
+            <span id="pixel-count">Piksel: 10</span>
+            <span id="timer">59s (+4)</span>
+            <span id="void-timer">Void: 02:00:00</span>
+        </div>
+    </header>
+
+    <div id="canvas-wrapper">
+        <canvas id="gameCanvas"></canvas>
+
+        <!-- Sol Üst Butonlar -->
+        <div id="tool-bar" class="ui-panel">
+            <button class="btn" id="undo-btn">↩ Geri Al</button>
+            <button class="btn" id="check-void-btn">🎯 Void'i Kontrol Et</button>
+        </div>
+
+        <!-- Canlı Sohbet Kutusu -->
+        <div id="chat-container">
+            <div id="chat-messages">
+                <div class="chat-msg"><b>Sistem:</b> Oyuna hoş geldin! Sohbetten mesaj yazabilirsin.</div>
+            </div>
+            <div id="chat-input-container">
+                <input type="text" id="chat-input" placeholder="Mesaj yaz..." maxlength="50">
+                <button id="chat-send">Gönder</button>
+            </div>
+        </div>
+
+        <!-- Renk Paleti -->
+        <div id="palette" class="ui-panel"></div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const pixelCountEl = document.getElementById('pixel-count');
+        const timerEl = document.getElementById('timer');
+        const voidTimerEl = document.getElementById('void-timer');
+        const undoBtn = document.getElementById('undo-btn');
+        const checkVoidBtn = document.getElementById('check-void-btn');
+        const palette = document.getElementById('palette');
+
+        const CANVAS_SIZE = 1000;
+        canvas.width = CANVAS_SIZE;
+        canvas.height = CANVAS_SIZE;
+
+        let availablePixels = 10;
+        let addAmount = 4; // Normalde 4 piksel
+        let currentTimer = 59;
+        
+        // 2 Saatlik Void Zamanlayıcısı (7200 Saniye)
+        let voidSecondsLeft = 7200; 
+        let voidActive = false;
+        let voidArea = { x: 450, y: 450, size: 100 }; // Harita ortasında 100x100 Void
+
+        let history = [];
+        let selectedColor = '#e74c3c';
+        const colors = ['#e74c3c', '#e67e22', '#f1c40f', '#2ecc71', '#3498db', '#9b59b6', '#ffffff', '#000000'];
+
+        // Tuval Beyaz Başlat
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+
+        // Palet
+        colors.forEach((color, idx) => {
+            const box = document.createElement('div');
+            box.className = `color-box ${idx === 0 ? 'selected' : ''}`;
+            box.style.background = color;
+            box.onclick = () => {
+                document.querySelector('.color-box.selected')?.classList.remove('selected');
+                box.classList.add('selected');
+                selectedColor = color;
+            };
+            palette.appendChild(box);
+        });
+
+        // Void Doğurma Fonksiyonu
+        function spawnVoid() {
+            voidActive = true;
+            ctx.fillStyle = '#111111'; // Void Rengi (Koyu Siyah/Mor)
+            ctx.fillRect(voidArea.x, voidArea.y, voidArea.size, voidArea.size);
+            addChatMessage("Sistem", "⚠️ YENİ VOID ALANI DOĞDU! Etrafını kapatın!");
+        }
+
+        // Piksel Koyma
+        canvas.addEventListener('click', (e) => {
+            if (availablePixels <= 0) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+
+            const x = Math.floor((e.clientX - rect.left) * scaleX);
+            const y = Math.floor((e.clientY - rect.top) * scaleY);
+
+            const prevColorData = ctx.getImageData(x, y, 1, 1).data;
+            const prevColor = `rgb(${prevColorData[0]}, ${prevColorData[1]}, ${prevColorData[2]})`;
+
+            ctx.fillStyle = selectedColor;
+            ctx.fillRect(x, y, 5, 5);
+
+            history.push({ x, y, size: 5, color: prevColor });
+            availablePixels--;
+            updateUI();
+        });
+
+        // Geri Al
+        undoBtn.onclick = () => {
+            if (history.length === 0) return;
+            const lastAction = history.pop();
+            ctx.fillStyle = lastAction.color;
+            ctx.fillRect(lastAction.x, lastAction.y, lastAction.size, lastAction.size);
+            availablePixels++;
+            updateUI();
+        };
+
+        // Void Etrafının Kapatıldığını Kontrol Etme
+        checkVoidBtn.onclick = () => {
+            if (!voidActive) {
+                alert("Şu anda aktif bir Void yok veya zaten kazanıldı!");
+                return;
+            }
+            
+            // Basitleştirilmiş kontrol: Void etrafındaki çizgiler boyanmış mı?
+            // Etrafı kapatıldıysa kazanılır ve yenilenme +1 olur:
+            addAmount = 1;
+            voidActive = false;
+            addChatMessage("Sistem", "🎉 TEBRİKLER! Void alanının etrafı kapatıldı ve kazanıldı! Yenilenme hızı +1 piksel oldu.");
+            alert("Void Kazandınız! Artık her 59 saniyede +1 piksel yenilenecek.");
+        };
+
+        // 59 Saniyelik Piksel Döngüsü
+        setInterval(() => {
+            currentTimer--;
+            if (currentTimer <= 0) {
+                availablePixels += addAmount;
+                currentTimer = 59;
+            }
+            updateUI();
+        }, 1000);
+
+        // 2 Saatlik Void Sayacı
+        setInterval(() => {
+            if (voidSecondsLeft > 0) {
+                voidSecondsLeft--;
+                let hrs = Math.floor(voidSecondsLeft / 3600);
+                let mins = Math.floor((voidSecondsLeft % 3600) / 60);
+                let secs = voidSecondsLeft % 60;
+                voidTimerEl.innerText = `Void: ${hrs.toString().padStart(2,'0')}:${mins.toString().padStart(2,'0')}:${secs.toString().padStart(2,'0')}`;
+            } else {
+                voidSecondsLeft = 7200; // Sayacı sıfırla
+                spawnVoid();
+            }
+        }, 1000);
+
+        function updateUI() {
+            pixelCountEl.innerText = `Piksel: ${availablePixels}`;
+            timerEl.innerText = `${currentTimer}s (+${addAmount})`;
+        }
+
+        // Chat (Sohbet) Mantığı
+        const chatInput = document.getElementById('chat-input');
+        const chatSend = document.getElementById('chat-send');
+        const chatMessages = document.getElementById('chat-messages');
+
+        function addChatMessage(user, msg) {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = 'chat-msg';
+            msgDiv.innerHTML = `<b>${user}:</b> ${msg}`;
+            chatMessages.appendChild(msgDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        chatSend.onclick = () => {
+            const text = chatInput.value.trim();
+            if (text !== "") {
+                addChatMessage("Oyuncu", text);
+                chatInput.value = "";
+            }
+        };
+
+        chatInput.addEventListener("keypress", (e) => {
+            if (e.key === "Enter") chatSend.click();
+        });
+    </script>
+</body>
+</html>
